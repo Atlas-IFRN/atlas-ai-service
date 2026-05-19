@@ -1,21 +1,23 @@
 from app.profiles.base import ProjectProfile
 
 DJANGO_PROFILE = ProjectProfile(
-    name="django",
-    canonical_language="Python + Django",
+    name="drf",
+    canonical_language="Django REST Framework (DRF)",
     aliases=[
-        "django",
-        "python",
-        "python django",
-        "django rest framework",
         "drf",
-        "python drf",
+        "django rest framework",
         "django-rest-framework",
+        "django rest",
+        "djangorest",
+        "django",
+        "python django",
+        "django drf",
+        "django + drf",
     ],
     tech_stack=[
         "python (.py)",
-        "django (manage.py, settings.py, urls.py, models.py)",
-        "django rest framework (serializers, viewsets) — opcional",
+        "django (manage.py, settings.py, urls.py)",
+        "django rest framework — OBRIGATÓRIO (serializers, viewsets, routers)",
     ],
     detection_globs=[
         "**/manage.py",

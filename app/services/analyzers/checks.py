@@ -94,6 +94,6 @@ def build_django_checks(analysis: DjangoAnalysis) -> List[Check]:
 
 def build_profile_checks(profile_name: str, analysis: object) -> List[Check]:
     """Dispatch by profile name. Returns [] when no analyzer is registered."""
-    if profile_name == "django" and isinstance(analysis, DjangoAnalysis):
+    if profile_name == "drf" and isinstance(analysis, DjangoAnalysis):
         return build_django_checks(analysis)
     return []

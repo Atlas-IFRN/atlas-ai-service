@@ -139,7 +139,7 @@ def _pack_sync(repo_url: str, declared_language: Optional[str], tmpdir: str) -> 
 
 def _run_static_analysis(repo_path: str, profile: ProjectProfile) -> tuple[Optional[str], Optional[DjangoAnalysis]]:
     """Runs the profile-specific static analyzer. Returns (formatted_text, typed_analysis)."""
-    if profile.name == "django":
+    if profile.name == "drf":
         try:
             analysis = analyze_django_project(repo_path)
             return format_django_analysis(analysis), analysis
