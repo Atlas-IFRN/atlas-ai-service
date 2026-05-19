@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 
 load_dotenv()
 
-from app.profiles import list_profiles, resolve_profile
+from app.profiles import list_profiles
 from app.schemas import (
     AnalysisResult,
     AnalyzePayload,
@@ -12,7 +12,6 @@ from app.schemas import (
     ProfileInfo,
 )
 from app.services import llm, repo
-from app.worker import celery_app
 
 app = FastAPI(title="Atlas IA Service", version="0.2.0")
 
@@ -45,26 +44,9 @@ async def detect(payload: DetectPayload) -> DetectResult:
     )
 
 
-@app.post("/analyze", status_code=202)
-async def analyze(payload: AnalyzePayload) -> dict:
-    """Enqueues an analysis task on the ia.analyze queue (production path)."""
-    profile = resolve_profile(payload.language)
-    task = celery_app.send_task(
-        "app.tasks.analyze_repository",
-        args=[payload.model_dump(mode="json")],
-    )
-    return {
-        "task_id": task.id,
-        "queue": "ia.analyze",
-        "status": "queued",
-        "resolved_profile": profile.name,
-        "canonical_language": profile.canonical_language,
-    }
-
-
-@app.post("/analyze/sync", response_model=AnalysisResult)
-async def analyze_sync(payload: AnalyzePayload) -> AnalysisResult:
-    """Runs the full pipeline inline (clone + repomix + LLM). Useful for testing."""
+@app.post("/analyze", response_model=AnalysisResult)
+async def analyze(payload: AnalyzePayload) -> AnalysisResult:
+    """Runs the full pipeline inline (clone + repomix + LLM)."""
     try:
         packed = await repo.pack_repository(str(payload.github_repo_url), declared_language=payload.language)
     except ValueError as exc:
