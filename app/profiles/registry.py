@@ -4,7 +4,7 @@ import fnmatch
 import posixpath
 from typing import Dict, Iterable, List, Optional
 
-from app.profiles.base import FALLBACK_PROFILE, ProjectProfile
+from app.profiles.base import ProjectProfile
 from app.profiles.django import DJANGO_PROFILE
 from app.profiles.react import REACT_NATIVE_PROFILE, REACT_PROFILE
 
@@ -22,11 +22,20 @@ def _glob_match(path: str, pattern: str) -> bool:
         return fnmatch.fnmatch(posixpath.basename(path), pattern[3:])
     return False
 
+
+# As três únicas stacks suportadas. Qualquer outra coisa é rejeitada.
+# Ordem importa: REACT_NATIVE antes de REACT porque "react native" contém "react".
 ALL_PROFILES: List[ProjectProfile] = [
     DJANGO_PROFILE,
-    REACT_NATIVE_PROFILE,  # antes do react porque o alias "react native" contém "react"
+    REACT_NATIVE_PROFILE,
     REACT_PROFILE,
 ]
+
+
+SUPPORTED_LANGUAGES_DESCRIPTION = (
+    "Stacks suportadas: "
+    + " | ".join(f"{p.canonical_language} (aliases: {', '.join(p.aliases[:4])})" for p in ALL_PROFILES)
+)
 
 
 def list_profiles() -> List[Dict[str, object]]:
@@ -36,29 +45,34 @@ def list_profiles() -> List[Dict[str, object]]:
             "canonical_language": p.canonical_language,
             "aliases": p.aliases,
         }
-        for p in ALL_PROFILES + [FALLBACK_PROFILE]
+        for p in ALL_PROFILES
     ]
 
 
 def resolve_profile(language: Optional[str]) -> ProjectProfile:
-    """Maps a free-form language string to a known ProjectProfile.
+    """Maps a free-form language string to one of the supported profiles.
 
-    Falls back to FALLBACK_PROFILE when nothing matches.
+    Raises ValueError when the language doesn't match DRF, React or React Native.
     """
-    if not language:
-        return FALLBACK_PROFILE
+    if not language or not language.strip():
+        raise ValueError(
+            "language é obrigatório. " + SUPPORTED_LANGUAGES_DESCRIPTION
+        )
+    # 1) match exato (alias normalizado).
     for profile in ALL_PROFILES:
         if profile.matches_alias(language):
             return profile
-    # Heurística adicional: tenta por substring normalizada (cobre coisas como
-    # "typescript react native + expo" → react-native, mas precisa testar RN antes do React).
+    # 2) substring normalizada — cobre "typescript react native + expo" etc.
+    #    React Native vai primeiro na lista, então "react native" não cai em React.
     normalized = "".join(ch.lower() for ch in language if ch.isalnum() or ch == " ")
     for profile in ALL_PROFILES:
         for alias in profile.aliases:
             alias_norm = "".join(ch.lower() for ch in alias if ch.isalnum() or ch == " ")
             if alias_norm and alias_norm in normalized:
                 return profile
-    return FALLBACK_PROFILE
+    raise ValueError(
+        f"Stack {language!r} não é suportada. " + SUPPORTED_LANGUAGES_DESCRIPTION
+    )
 
 
 def detect_profile_from_tree(file_paths: Iterable[str]) -> Optional[ProjectProfile]:

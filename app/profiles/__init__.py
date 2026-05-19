@@ -1,6 +1,7 @@
-from app.profiles.base import ProjectProfile, FALLBACK_PROFILE
+from app.profiles.base import ProjectProfile
 from app.profiles.registry import (
     ALL_PROFILES,
+    SUPPORTED_LANGUAGES_DESCRIPTION,
     detect_profile_from_tree,
     list_profiles,
     resolve_profile,
@@ -8,8 +9,8 @@ from app.profiles.registry import (
 
 __all__ = [
     "ProjectProfile",
-    "FALLBACK_PROFILE",
     "ALL_PROFILES",
+    "SUPPORTED_LANGUAGES_DESCRIPTION",
     "detect_profile_from_tree",
     "list_profiles",
     "resolve_profile",

@@ -13,7 +13,6 @@ from typing import List, Optional, Tuple
 from repomix import RepoProcessor, RepomixConfig
 
 from app.profiles import (
-    FALLBACK_PROFILE,
     ProjectProfile,
     detect_profile_from_tree,
     resolve_profile,
@@ -112,21 +111,16 @@ def _pack_sync(repo_url: str, declared_language: Optional[str], tmpdir: str) -> 
     _git_clone(repo_url, repo_path)
     paths = _walk_repo(repo_path)
 
+    # resolve_profile já levanta ValueError se a linguagem não casa com nenhuma
+    # das stacks suportadas (DRF, React, React Native), então aqui é sempre válido.
     declared_profile = resolve_profile(declared_language)
     detected_profile = detect_profile_from_tree(paths)
-    # Prioriza o perfil declarado quando ele é reconhecido; senão usa o detectado;
-    # senão cai no fallback. Isso preserva o gate de linguagem no LLM.
-    effective_profile = (
-        declared_profile
-        if declared_profile is not FALLBACK_PROFILE
-        else (detected_profile or FALLBACK_PROFILE)
-    )
 
-    packed = _pack_local(repo_path, effective_profile, output_path)
-    static_text, django_analysis = _run_static_analysis(repo_path, effective_profile)
+    packed = _pack_local(repo_path, declared_profile, output_path)
+    static_text, django_analysis = _run_static_analysis(repo_path, declared_profile)
 
     return PackedRepository(
-        profile=effective_profile,
+        profile=declared_profile,
         detected_profile=detected_profile,
         declared_profile=declared_profile,
         packed_code=packed,

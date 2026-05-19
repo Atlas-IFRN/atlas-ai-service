@@ -42,10 +42,13 @@ class AnalyzePayload(BaseModel):
 
     @field_validator("language")
     @classmethod
-    def _strip_language(cls, v: str) -> str:
+    def _strip_and_validate_language(cls, v: str) -> str:
         v = (v or "").strip()
         if not v:
             raise ValueError("language não pode ser vazio")
+        # Import local pra evitar ciclo no carregamento do módulo.
+        from app.profiles import resolve_profile
+        resolve_profile(v)  # raises ValueError com a lista de stacks suportadas
         return v
 
     @field_validator("criteria")
