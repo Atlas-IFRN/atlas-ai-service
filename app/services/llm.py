@@ -36,6 +36,13 @@ DEFAULT_CRITERION_WEIGHT = 10
 MIN_FINAL_SCORE = 0
 MAX_FINAL_SCORE = 100
 
+# Distribuição final do score entre as duas famílias de checks.
+# Profile checks (análise estática do perfil) valem 20 pontos no máximo;
+# critérios passados pelo usuário valem 80. Se uma das famílias estiver vazia,
+# a outra absorve 100% — ver compute_score().
+PROFILE_SHARE = 20
+CRITERIA_SHARE = 80
+
 
 PROMPT_TEMPLATE = """Você é um avaliador técnico RIGOROSO e SINCERO. Decide, com base em EVIDÊNCIAS CITÁVEIS no código, se o projeto cumpre o desafio e seus critérios. Sua reputação depende de NUNCA inventar evidência — nem para afirmar presença, nem para afirmar ausência.
 
@@ -300,9 +307,36 @@ def _extract_json(text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def compute_score(checks: List[Check]) -> int:
-    """Score = max(0, 100 − Σ weight of every check whose `present` is False)."""
-    penalty = sum(c.weight for c in checks if not c.present)
-    return max(MIN_FINAL_SCORE, min(MAX_FINAL_SCORE, MAX_FINAL_SCORE - penalty))
+    """Score 0–100 dividido entre profile (20%) e criteria (80%).
+
+    Dentro de cada família, o `weight` de cada check é relativo: a contribuição
+    da família vem de (Σ weight dos checks presentes) / (Σ weight total da família)
+    multiplicado pela fatia (20 ou 80).
+
+    Se uma família não tem checks, a outra absorve 100% — assim um payload sem
+    critérios não zera o score, e um perfil sem checks estáticos também não.
+    """
+    profile_checks = [c for c in checks if c.kind == "profile"]
+    criterion_checks = [c for c in checks if c.kind == "criterion"]
+
+    profile_total = sum(c.weight for c in profile_checks)
+    criteria_total = sum(c.weight for c in criterion_checks)
+    profile_got = sum(c.weight for c in profile_checks if c.present)
+    criteria_got = sum(c.weight for c in criterion_checks if c.present)
+
+    if profile_total == 0 and criteria_total == 0:
+        return MAX_FINAL_SCORE
+    if profile_total == 0:
+        score = (criteria_got / criteria_total) * MAX_FINAL_SCORE
+    elif criteria_total == 0:
+        score = (profile_got / profile_total) * MAX_FINAL_SCORE
+    else:
+        score = (
+            (profile_got / profile_total) * PROFILE_SHARE
+            + (criteria_got / criteria_total) * CRITERIA_SHARE
+        )
+
+    return max(MIN_FINAL_SCORE, min(MAX_FINAL_SCORE, round(score)))
 
 
 def _build_criterion_checks(
