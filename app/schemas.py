@@ -27,17 +27,17 @@ class AnalyzePayload(BaseModel):
     challenge_id: str
     github_repo_url: HttpUrl
     language: str
-    criteria: List[str] = Field(default_factory=list)
+    criteria: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Critérios a avaliar, no formato {label: peso}. "
+        "Peso é 0-100 (penalidade subtraída quando o critério não é atendido). "
+        "Ordem do dicionário é preservada e usada como ordem dos ids (1, 2, 3, ...).",
+    )
     challenge_description: Optional[str] = None
     theme: Optional[str] = Field(
         default=None,
         description="Tema/assunto central do desafio (ex.: 'gestão de bolsas'). "
         "Usado como contexto para o LLM marcar os critérios.",
-    )
-    criteria_weights: Optional[Dict[str, int]] = Field(
-        default=None,
-        description="Penalidade (0-100) por critério se ele estiver ausente. "
-        "Se omitido, cada critério vale 10 pontos.",
     )
 
     @field_validator("language")
@@ -53,8 +53,20 @@ class AnalyzePayload(BaseModel):
 
     @field_validator("criteria")
     @classmethod
-    def _clean_criteria(cls, v: List[str]) -> List[str]:
-        return [c.strip() for c in (v or []) if c and c.strip()]
+    def _clean_criteria(cls, v: Dict[str, int]) -> Dict[str, int]:
+        cleaned: Dict[str, int] = {}
+        for label, weight in (v or {}).items():
+            label = (label or "").strip()
+            if not label:
+                continue
+            try:
+                weight_int = int(weight)
+            except (TypeError, ValueError):
+                raise ValueError(f"peso do critério '{label}' deve ser inteiro, recebido: {weight!r}")
+            if not 0 <= weight_int <= 100:
+                raise ValueError(f"peso do critério '{label}' fora do intervalo 0-100: {weight_int}")
+            cleaned[label] = weight_int
+        return cleaned
 
 
 class AnalysisResult(BaseModel):

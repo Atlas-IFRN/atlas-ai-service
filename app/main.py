@@ -80,7 +80,6 @@ async def analyze_sync(payload: AnalyzePayload) -> AnalysisResult:
             theme=payload.theme,
             declared_language=payload.language,
             criteria=payload.criteria,
-            criteria_weights=payload.criteria_weights,
             packed=packed,
         )
     except Exception as exc:

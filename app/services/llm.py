@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -32,7 +31,6 @@ RESPONSE_TOKEN_BUDGET = int(os.getenv("RESPONSE_TOKEN_BUDGET", "2000"))
 # e sub-alocar chars de código, garantindo folga contra truncamento silencioso.
 PROMPT_CHARS_PER_TOKEN = float(os.getenv("PROMPT_CHARS_PER_TOKEN", "2.8"))
 
-DEFAULT_CRITERION_WEIGHT = 10
 MIN_FINAL_SCORE = 0
 MAX_FINAL_SCORE = 100
 
@@ -54,7 +52,7 @@ Stack: {canonical_language} (perfil "{profile_name}", aliases: {aliases_list})
 # 2. ANÁLISE ESTÁTICA (fatos AST — confiáveis)
 {static_analysis}
 
-# 3. CRITÉRIOS — id é token opaco, copie literal
+# 3. CRITÉRIOS — id é número sequencial ("1", "2", "3"...), copie LITERAL como string
 {criteria_list}
 
 # 4. REGRAS DE DECISÃO (curtas, MECÂNICAS)
@@ -91,7 +89,7 @@ R6. CRITÉRIO DE TEMA (gatilho: label contém "tema", "domínio", "consistente c
   "feedback": "2-3 frases sobre o conteúdo do projeto: qual domínio o código de fato implementa (cite models/rotas reais), e o quanto isso bate ou não com \"{theme}\". Fale do projeto, NÃO do processo de avaliação (proibido: 'present', 'critério', 'evidence', 'JSON').",
   "criterion_checks": [
     {{
-      "id": "<copie literal da LISTA DE IDS PERMITIDOS da seção 3>",
+      "id": "<id numérico como string: \"1\", \"2\", \"3\"... — copie da LISTA DE IDS PERMITIDOS da seção 3>",
       "_assunto": "<o que o critério está pedindo, em 2-5 palavras (ex: 'tabela Wallet ligada a User', 'aderência ao tema X')>",
       "_polaridade_criterio": "positivo|negativo",
       "_onde_busquei": "<arquivos e seções que você varreu de fato, separados por vírgula>",
@@ -132,46 +130,32 @@ REGRAS DE strengths / improvements (diferente de evidence — NÃO use o mesmo e
 # Prompt
 # ---------------------------------------------------------------------------
 
-def _slugify(text: str) -> str:
-    """'Tem que guardar dinheiro do usuário!' → 'tem-que-guardar-dinheiro-do-usuario'."""
-    normalized = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower()
-    return slug or "criterion"
+def build_criterion_map(criteria: Dict[str, int]) -> List[Tuple[str, str, int]]:
+    """Returns [(id, label, weight), ...] with sequential numeric ids ("1", "2", ...).
 
-
-def build_criterion_map(criteria: List[str]) -> List[Tuple[str, str]]:
-    """Returns [(slug, original_label), ...] with unique slugs (suffix on collision)."""
-    used: set[str] = set()
-    out: List[Tuple[str, str]] = []
-    for label in criteria:
-        base = _slugify(label)
-        slug = base
-        i = 2
-        while slug in used:
-            slug = f"{base}-{i}"
-            i += 1
-        used.add(slug)
-        out.append((slug, label))
+    Preserves the dict insertion order (Python 3.7+), which is also the order the
+    LLM must use when emitting `criterion_checks`.
+    """
+    out: List[Tuple[str, str, int]] = []
+    for i, (label, weight) in enumerate((criteria or {}).items(), start=1):
+        out.append((str(i), label, int(weight)))
     return out
 
 
-def _format_criteria(criteria_map: List[Tuple[str, str]], weights: Optional[Dict[str, int]]) -> str:
+def _format_criteria(criteria_map: List[Tuple[str, str, int]]) -> str:
     if not criteria_map:
         return "(sem critérios — avalie apenas os checks do perfil)"
     lines = []
-    for i, (slug, label) in enumerate(criteria_map, start=1):
-        w = (weights or {}).get(label, DEFAULT_CRITERION_WEIGHT)
-        # Formato em "campo: valor" sem aspas em volta do slug — aspas viram
-        # convite ao LLM para editar o texto. Slug deve parecer um token fixo.
+    for cid, label, weight in criteria_map:
         lines.append(
-            f"[{i}] id    = {slug}\n"
+            f"[{cid}] id    = {cid}\n"
             f"    label = {label}\n"
-            f"    peso  = {w}"
+            f"    peso  = {weight}"
         )
     lines.append("")
     lines.append("LISTA DE IDS PERMITIDOS (COPIE LITERALMENTE — qualquer outro id será descartado):")
-    for slug, _ in criteria_map:
-        lines.append(f"  - {slug}")
+    for cid, _, _ in criteria_map:
+        lines.append(f"  - {cid}")
     return "\n".join(lines)
 
 
@@ -200,8 +184,7 @@ def build_prompt(
     theme: Optional[str],
     challenge_description: str,
     declared_language: str,
-    criteria_map: List[Tuple[str, str]],
-    criteria_weights: Optional[Dict[str, int]],
+    criteria_map: List[Tuple[str, str, int]],
     packed_code: str,
     static_analysis: Optional[str],
 ) -> str:
@@ -221,7 +204,7 @@ def build_prompt(
         declared_language=declared_language or "(não informada)",
         aliases_list=_format_aliases(profile),
         static_analysis=static_text,
-        criteria_list=_format_criteria(criteria_map, criteria_weights),
+        criteria_list=_format_criteria(criteria_map),
         profile_hints=profile_hints,
     )
 
@@ -382,32 +365,32 @@ def compute_score(checks: List[Check]) -> int:
 
 def _build_criterion_checks(
     raw_list: list,
-    criteria_map: List[Tuple[str, str]],
-    weights: Optional[Dict[str, int]],
+    criteria_map: List[Tuple[str, str, int]],
 ) -> List[Check]:
     """Builds Checks from the LLM `criterion_checks` array.
 
-    Looks the LLM item up by either the slug (preferred) or the original label
-    (fallback, in case the model echoes the label). Anything else is dropped.
+    Looks up each item by id (string "1", "2", ...), falling back to label.
+    Anything else is dropped with a warning.
     """
     by_key: Dict[str, dict] = {}
     if isinstance(raw_list, list):
         for item in raw_list:
-            if isinstance(item, dict) and item.get("id"):
-                by_key[str(item["id"]).strip()] = item
+            raw_id = item.get("id") if isinstance(item, dict) else None
+            if raw_id is None or (isinstance(raw_id, str) and not raw_id.strip()):
+                continue
+            by_key[str(raw_id).strip()] = item
 
-    valid_keys = {slug for slug, _ in criteria_map} | {label for _, label in criteria_map}
+    valid_keys = {cid for cid, _, _ in criteria_map} | {label for _, label, _ in criteria_map}
     extras = [k for k in by_key.keys() if k not in valid_keys]
     if extras:
         logger.warning("LLM produziu critérios fora da lista; descartando: %s", extras)
 
     checks: List[Check] = []
-    for slug, label in criteria_map:
-        w = int((weights or {}).get(label, DEFAULT_CRITERION_WEIGHT))
-        item = by_key.get(slug) or by_key.get(label) or {}
+    for cid, label, weight in criteria_map:
+        item = by_key.get(cid) or by_key.get(label) or {}
         present = bool(item.get("present", False))
         evidence = str(item.get("evidence", "")).strip() or ("encontrado" if present else "não encontrado no código")
-        checks.append(Check(id=slug, label=label, kind="criterion", weight=w, present=present, evidence=evidence))
+        checks.append(Check(id=cid, label=label, kind="criterion", weight=weight, present=present, evidence=evidence))
     return checks
 
 
@@ -422,8 +405,7 @@ async def evaluate(
     challenge_description: str,
     theme: Optional[str],
     declared_language: str,
-    criteria: List[str],
-    criteria_weights: Optional[Dict[str, int]],
+    criteria: Dict[str, int],
     packed: PackedRepository,
 ) -> AnalysisResult:
     profile_checks = build_profile_checks(packed.profile.name, packed.django_analysis)
@@ -435,12 +417,9 @@ async def evaluate(
         challenge_description=challenge_description,
         declared_language=declared_language,
         criteria_map=criteria_map,
-        criteria_weights=criteria_weights,
         packed_code=packed.packed_code,
         static_analysis=packed.static_analysis,
     )
-    
-    print(len(prompt))
 
     raw = await call_ollama(prompt)
     data = _extract_json(raw)
@@ -448,7 +427,6 @@ async def evaluate(
     criterion_checks = _build_criterion_checks(
         data.get("criterion_checks"),
         criteria_map=criteria_map,
-        weights=criteria_weights,
     )
     all_checks = profile_checks + criterion_checks
     score = compute_score(all_checks)

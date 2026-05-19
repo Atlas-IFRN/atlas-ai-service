@@ -45,6 +45,5 @@ async def _run(data: AnalyzePayload) -> AnalysisResult:
         theme=data.theme,
         declared_language=data.language,
         criteria=data.criteria,
-        criteria_weights=data.criteria_weights,
         packed=packed,
     )
