@@ -44,60 +44,83 @@ PROFILE_SHARE = 20
 CRITERIA_SHARE = 80
 
 
-PROMPT_TEMPLATE = """Você é um avaliador técnico RIGOROSO e SINCERO. Decide, com base em EVIDÊNCIAS CITÁVEIS no código, se o projeto cumpre o desafio e seus critérios. Sua reputação depende de NUNCA inventar evidência — nem para afirmar presença, nem para afirmar ausência.
+PROMPT_TEMPLATE = """Você é AVALIADOR TÉCNICO. Para cada critério da seção 3, você vai PREENCHER UMA FICHA DE RACIOCÍNIO antes de decidir present. A ficha é obrigatória e seus campos `_*` são lidos. Em dúvida, present=false. NUNCA invente arquivo, classe ou linha que não apareça no código abaixo.
 
-1. DESAFIO
-Tema/assunto central: {theme}
-Descrição:
-{challenge_description}
+# 1. DESAFIO
+Tema: "{theme}"
+Descrição: {challenge_description}
+Stack: {canonical_language} (perfil "{profile_name}", aliases: {aliases_list})
 
-Stack esperada (perfil "{profile_name}"): {canonical_language}
-Tag bruta enviada pelo usuário (apenas rótulo): {declared_language}
-Aliases que significam a MESMA stack: {aliases_list}
-
-2. ANÁLISE ESTÁTICA  ←  FATOS extraídos pelo parser AST
+# 2. ANÁLISE ESTÁTICA (fatos AST — confiáveis)
 {static_analysis}
 
-3. CRITÉRIOS A AVALIAR  ←  use EXATAMENTE estes ids
+# 3. CRITÉRIOS — id é token opaco, copie literal
 {criteria_list}
 
-Para CADA critério acima, decida:
-  • present = true ou false (o critério está ATENDIDO no projeto?) - baseie-se apenas em evidências CITÁVEIS no código, NUNCA invente. Se não encontrar evidência clara de presença, assuma ausência (present=false).
-  • evidence = frase curta CITANDO arquivo:classe/função/campo/import específico
-               que prova a decisão. Nunca uma frase genérica. Seja específico, varra realmente o código para encontrar evidências concretas. Se present=true, a evidence deve ser uma prova concreta de presença. Se present=false, a evidence deve listar o que foi varrido para chegar à conclusão de ausência (ex: "varri X arquivos e não encontrei Y").
+# 4. REGRAS DE DECISÃO (curtas, MECÂNICAS)
 
-REGRAS DE EVIDÊNCIA — leia ANTES de marcar present=true:
-  1. LITERAL É LITERAL. Se o critério usa aspas, "exatamente", "com nome", "chamada/o" → procure a STRING idêntica no código. Similaridade NÃO conta.
-  2. CASE-SENSITIVE quando o critério especifica um caso. 'Wallet' ≠ 'wallet' ≠ 'WALLET'. Se o caso não bate, present=false.
-  3. NOME DE CLASSE/FUNÇÃO/ATRIBUTO ≠ NOME DE TABELA/COLUNA/ENDPOINT/ARQUIVO. Não infira um do outro.
-     - Tabela do banco: só conta se vier de `class Meta: db_table = "X"`, de uma migration (`CREATE TABLE X`, `RenameModel`, `db_table=`), ou de SQL/DDL explícito. Em Django, `class Wallet(models.Model)` no app `book` cria a tabela `book_wallet` (minúsculo, com prefixo) — NÃO 'Wallet'.
-     - Coluna do banco: só conta se vier de `db_column="X"` ou da migration. Nome do atributo Python é pista, não prova.
-     - Rota/endpoint: só conta se aparecer literal no urls.py / decorator / router.
-     - Nome de arquivo: só conta se o arquivo existir com aquele nome exato.
-  4. INFERÊNCIA POR SINÔNIMO É PROIBIDA. "Tem classe Carteira → atende critério de Wallet" = ERRADO. present=false.
-  5. NA DÚVIDA → present=false. É melhor errar para o lado da ausência do que inventar uma presença.
-  6. A evidence DEVE conter a string literal que você encontrou. Se você não consegue citar a string exata no código, present=false.
+R1. "tema" / "domínio" / "desafio" em QUALQUER critério SEMPRE = "{theme}" da seção 1. Nunca o tema que o código tem.
 
-NÃO crie critérios novos. NÃO renomeie. Responda na MESMA ORDEM e com os MESMOS ids
-(o id é o slug; o label é só descritivo).
+R2. TABELA VERDADE de `present` (apply via ficha, nunca pule):
+       critério "deve ter X"      + X achado no código      → present=true
+       critério "deve ter X"      + X ausente               → present=false
+       critério "NÃO deve ter X"  + X achado no código      → present=false
+       critério "NÃO deve ter X"  + X ausente               → present=true
 
-4. FORMATO DE SAÍDA — APENAS JSON VÁLIDO, sem markdown, sem comentários
-Não retorne `score` (o servidor calcula). Apenas:
+R3. "X achado" exige UM identificador literal real do código (classe, função, campo, rota, db_table, decorador), num arquivo do bloco 6 ou da seção 2. README, nome de pasta, nome de repo NÃO contam.
+
+R4. "X" do critério é o ASSUNTO específico que ele cita (Wallet → procure Wallet; entidades do tema → procure entidades do `{theme}`). Nunca procure outra coisa.
+
+R5. Entidades universais (User, Auth, Session, Profile, Permission, Role, Token, Log, Notification, Tag, Comment) NÃO provam aderência ao tema — todo sistema tem.
+
+R6. CRITÉRIO DE TEMA (gatilho: label contém "tema", "domínio", "consistente com o desafio", "seguir o desafio/tema"):
+    (a) Extraia a palavra-chave do `{theme}` (ex: "financeiro", "saúde", "logística", "educação").
+    (b) Extraia a palavra-chave do DOMÍNIO REAL do projeto a partir de NOMES de apps/pastas/models/rotas (ex: `apps/scholarship/` → "scholarship/bolsas"; `models/Book` → "livros"; `wallet_service/` → "financeiro").
+    (c) Compare (a) vs (b). Se NÃO casam semanticamente → present=false, SEM EXCEÇÃO. Apontar arquivos como `apps/scholarship/...` num tema "financeiro" é PROVA DE MISMATCH, não prova de aderência — a própria palavra "scholarship" no path mostra que o projeto é de bolsas, não financeiro.
+    (d) Se casam (a == b semanticamente), aplique R2 normalmente (verifique se há entidades do tema no código).
+    (e) Atenção: existir bolsas/scholarships não conta como "financeiro" porque envolve dinheiro. Domínio é o NEGÓCIO modelado (gestão de bolsas é educacional/concessão, não financeiro de transações).
+
+# 5. SAÍDA — APENAS JSON, sem markdown nem texto fora
+
+`criterion_checks` precisa ter EXATAMENTE um item por id da seção 3, na mesma ordem. Cada item preenche TODOS os campos `_*` (ficha de raciocínio — força você a pensar) E os 3 campos consumidos pelo servidor (`id`, `present`, `evidence`). Sem campos vazios.
+
 {{
-  "feedback": "<2-3 frases: o que o projeto faz, o que falta, com nomes de arquivos>",
+  "feedback": "2-3 frases sobre o conteúdo do projeto: qual domínio o código de fato implementa (cite models/rotas reais), e o quanto isso bate ou não com \"{theme}\". Fale do projeto, NÃO do processo de avaliação (proibido: 'present', 'critério', 'evidence', 'JSON').",
   "criterion_checks": [
     {{
-      "id": "<id exato listado em 3>",
-      "present": true|false,
-      "evidence": "<para presença: cite arquivo:linha + a STRING LITERAL encontrada no código (ex: \"book/migrations/0001_initial.py: db_table='Wallet'\"). Se o critério pede um nome literal e você só viu nome de classe/atributo Python (não db_table/migration/DDL), NÃO marque presente. Para ausência: liste o que foi VARRIDO e o resultado (ex: \"varri models.py e migrations/*.py, nenhum db_table='Wallet' encontrado\"). Se não foi varrido nada, não invente.>"
-    }},
-    ...
+      "id": "<copie literal da LISTA DE IDS PERMITIDOS da seção 3>",
+      "_assunto": "<o que o critério está pedindo, em 2-5 palavras (ex: 'tabela Wallet ligada a User', 'aderência ao tema X')>",
+      "_polaridade_criterio": "positivo|negativo",
+      "_onde_busquei": "<arquivos e seções que você varreu de fato, separados por vírgula>",
+      "_o_que_achei": "<identificadores literais que respondem ao _assunto, OU descreva o que ESTÁ nos arquivos varridos sem o assunto (ex: 'apenas Book/Review/Reservation, nenhum Wallet'). NUNCA escreva só 'nenhum' — você precisa nomear o que está lá>",
+      "_polaridade_evidencia": "afirmativa|negativa",
+      "_aplicando_R2": "<diga em uma frase qual linha da R2 você está aplicando e qual o resultado>",
+      "_se_for_criterio_de_tema": "<APENAS se R6 dispara: 'tema_pedido=<palavra-chave de {theme}> vs dominio_real=<palavra-chave extraída de nomes do código>; casam=sim|nao'. Se não for critério de tema, escreva 'n/a'>",
+      "present": true,
+      "evidence": "<frase única, ver REGRAS DE EVIDENCE abaixo>"
+    }}
   ],
-  "strengths": ["<frase curta citando arquivo/classe real do projeto>", ...],
-  "improvements": ["<sugestão acionável aplicada ao projeto real>", ...]
+  "strengths": ["<observação de alto nível sobre o projeto — emita 2 a 4 strings concretas, NUNCA o texto literal '...'>"],
+  "improvements": ["<sugestão acionável — emita 2 a 4 strings concretas, NUNCA o texto literal '...'>"]
 }}
 
-5. CÓDIGO DO REPOSITÓRIO (filtrado pelo perfil "{profile_name}")
+REGRAS DE evidence:
+  • FRASE COMPLETA: 6-18 palavras, sujeito + verbo, termina em ponto. PROIBIDO emitir uma palavra só ("nenhum", "sim", "não", "presente") — isso é fragmento, não evidência.
+  • DEVE conter (a) arquivo (`X.py` ou `X.py:linha`) E (b) identificador literal do código que responde ao `_assunto`.
+  • DEVE falar do `_assunto`. Se o critério é sobre Wallet, evidence menciona Wallet (achado ou não, e o que tem no lugar). Se é sobre tema, lista models/entidades do domínio `{theme}` (achados ou não).
+  • UNICIDADE: cada critério faz a SUA própria busca. PROIBIDO usar a MESMA evidence (mesmo texto, mesma linha do código) em 2+ critérios. Se acontecer, está errado — re-leia cada critério e busque algo específico dele.
+  • Coerente com `_aplicando_R2`: false → "<arquivo> contém <Y, Z>; <X> não encontrado." | true → "<arquivo>:<linha> define <X literal>."
+  • Proibido também: prosa sem âncora ("O projeto implementa Y."); "encontrado" / "não encontrado"; copiar texto do prompt; citar tema/entidade ALHEIO ao desafio.
+
+REGRAS DE strengths / improvements (diferente de evidence — NÃO use o mesmo estilo):
+  • Emita entre 2 e 4 strings concretas em cada array. NUNCA inclua o literal "..." nem qualquer reticência como item — isso aparece no schema apenas como notação, é PROIBIDO na saída.
+  • Nível arquitetural / qualitativo (padrões, organização, cobertura, separação de responsabilidades).
+  • Sem `arquivo:linha`, sem placeholders, sem `<...>`, sem nomes inventados.
+  • strengths: o que um tech lead destacaria em code review.
+  • improvements: sugestão acionável + onde aplicar (ex: "Registrar ViewSets via DefaultRouter em urls.py" — área + ação).
+  • Proibido: repetir feedback ou evidence; "está bem feito"; placeholders; temas alheios; o literal "...".
+
+# 6. CÓDIGO ({profile_name})
 {code_content}
 """
 
@@ -133,9 +156,19 @@ def _format_criteria(criteria_map: List[Tuple[str, str]], weights: Optional[Dict
     if not criteria_map:
         return "(sem critérios — avalie apenas os checks do perfil)"
     lines = []
-    for slug, label in criteria_map:
+    for i, (slug, label) in enumerate(criteria_map, start=1):
         w = (weights or {}).get(label, DEFAULT_CRITERION_WEIGHT)
-        lines.append(f"  - id: {slug!r}\n    label: {label!r}\n    peso_se_ausente: {w}")
+        # Formato em "campo: valor" sem aspas em volta do slug — aspas viram
+        # convite ao LLM para editar o texto. Slug deve parecer um token fixo.
+        lines.append(
+            f"[{i}] id    = {slug}\n"
+            f"    label = {label}\n"
+            f"    peso  = {w}"
+        )
+    lines.append("")
+    lines.append("LISTA DE IDS PERMITIDOS (COPIE LITERALMENTE — qualquer outro id será descartado):")
+    for slug, _ in criteria_map:
+        lines.append(f"  - {slug}")
     return "\n".join(lines)
 
 
