@@ -80,6 +80,9 @@ R6. CRITÉRIO DE TEMA (gatilho: label contém "tema", "domínio", "consistente c
     (d) Se casam (a == b semanticamente), aplique R2 normalmente (verifique se há entidades do tema no código).
     (e) Atenção: existir bolsas/scholarships não conta como "financeiro" porque envolve dinheiro. Domínio é o NEGÓCIO modelado (gestão de bolsas é educacional/concessão, não financeiro de transações).
 
+## REGRAS ESPECÍFICAS DO PERFIL "{profile_name}" (aplicam-se SOMENTE a esta stack)
+{profile_hints}
+
 # 5. SAÍDA — APENAS JSON, sem markdown nem texto fora
 
 `criterion_checks` precisa ter EXATAMENTE um item por id da seção 3, na mesma ordem. Cada item preenche TODOS os campos `_*` (ficha de raciocínio — força você a pensar) E os 3 campos consumidos pelo servidor (`id`, `present`, `evidence`). Sem campos vazios.
@@ -206,6 +209,10 @@ def build_prompt(
     static_text = _truncate(static_text, MAX_STATIC_ANALYSIS_CHARS,
                             "\n(...análise estática truncada...)")
 
+    # evaluation_hints é texto livre vindo do profile. Vai como VALOR em .format(),
+    # então braces dentro do conteúdo passam literais — não precisa escapar.
+    profile_hints = profile.evaluation_hints or "(perfil sem regras específicas)"
+
     template_kwargs = dict(
         theme=theme or "(não informado — extraia da descrição)",
         challenge_description=challenge_description or "(sem descrição fornecida)",
@@ -215,6 +222,7 @@ def build_prompt(
         aliases_list=_format_aliases(profile),
         static_analysis=static_text,
         criteria_list=_format_criteria(criteria_map, criteria_weights),
+        profile_hints=profile_hints,
     )
 
     # Mede o "esqueleto" do prompt (tudo, menos o código) para descobrir
