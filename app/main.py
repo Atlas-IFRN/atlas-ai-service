@@ -13,7 +13,14 @@ from app.schemas import (
 )
 from app.services import llm, repo
 
-app = FastAPI(title="Atlas IA Service", version="0.2.0")
+app = FastAPI(
+    title="Atlas IA Service",
+    description="Serviço de IA para análise de repositórios, fornecendo detecção de perfil e avaliação baseada em LLM.",
+    version="0.2.0",
+    docs_url="/api/docs",
+    redoc_url=None,
+    openapi_url="/api/schema",
+)
 
 
 @app.get("/health")
