@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 from app.profiles import ProjectProfile
-from app.schemas import AnalysisResult, Check
+from app.schemas import AnalysisResult, Criterion
 from app.services.analyzers import build_profile_checks
 from app.services.repo import PackedRepository
 
@@ -330,7 +330,7 @@ def _extract_json(text: str) -> dict:
 # Score calculation
 # ---------------------------------------------------------------------------
 
-def compute_score(checks: List[Check]) -> int:
+def compute_score(checks: List[Criterion]) -> int:
     """Score 0–100 dividido entre profile (20%) e criteria (80%).
 
     Dentro de cada família, o `weight` de cada check é relativo: a contribuição
@@ -366,7 +366,7 @@ def compute_score(checks: List[Check]) -> int:
 def _build_criterion_checks(
     raw_list: list,
     criteria_map: List[Tuple[str, str, int]],
-) -> List[Check]:
+) -> List[Criterion]:
     """Builds Checks from the LLM `criterion_checks` array.
 
     Looks up each item by id (string "1", "2", ...), falling back to label.
@@ -385,12 +385,12 @@ def _build_criterion_checks(
     if extras:
         logger.warning("LLM produziu critérios fora da lista; descartando: %s", extras)
 
-    checks: List[Check] = []
+    checks: List[Criterion] = []
     for cid, label, weight in criteria_map:
         item = by_key.get(cid) or by_key.get(label) or {}
         present = bool(item.get("present", False))
         evidence = str(item.get("evidence", "")).strip() or ("encontrado" if present else "não encontrado no código")
-        checks.append(Check(id=cid, label=label, kind="criterion", weight=weight, present=present, evidence=evidence))
+        checks.append(Criterion(id=cid, label=label, kind="criterion", weight=weight, present=present, evidence=evidence))
     return checks
 
 
@@ -436,7 +436,7 @@ async def evaluate(
         challenge_id=challenge_id,
         score=score,
         feedback=str(data.get("feedback", "")).strip(),
-        checks=all_checks,
+        criteries=all_checks,
         strengths=[str(s).strip() for s in (data.get("strengths") or []) if str(s).strip()],
         improvements=[str(s).strip() for s in (data.get("improvements") or []) if str(s).strip()],
         profile=packed.profile.name,

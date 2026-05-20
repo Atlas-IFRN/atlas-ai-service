@@ -3,10 +3,10 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
-CheckKind = Literal["profile", "criterion"]
+CriterionKind = Literal["profile", "criterion"]
 
 
-class Check(BaseModel):
+class Criterion(BaseModel):
     """Um item binário do scorecard.
 
     - `kind="profile"`: derivado da análise estática do perfil (fato).
@@ -16,10 +16,15 @@ class Check(BaseModel):
 
     id: str
     label: str
-    kind: CheckKind
+    kind: CriterionKind
     weight: int = Field(ge=0, le=100)
     present: bool
     evidence: str = ""
+
+
+# Alias retrocompatível
+Check = Criterion
+CheckKind = CriterionKind
 
 
 class AnalyzePayload(BaseModel):
@@ -74,7 +79,11 @@ class AnalysisResult(BaseModel):
     challenge_id: str
     score: int = Field(ge=0, le=100)
     feedback: str
-    checks: List[Check] = Field(default_factory=list)
+    criteries: List[Criterion] = Field(
+        default_factory=list,
+        description="Lista de critérios avaliados (perfil + critérios do usuário). "
+        "Mapeado diretamente para ChallengeSubmission.ai_criteries no track-service.",
+    )
     strengths: List[str] = Field(default_factory=list)
     improvements: List[str] = Field(default_factory=list)
     profile: Optional[str] = None
