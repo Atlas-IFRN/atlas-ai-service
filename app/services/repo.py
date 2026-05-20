@@ -39,20 +39,40 @@ class PackedRepository:
 
 
 def _safe_repo_url(repo_url: str) -> str:
-    """Light validation — avoid passing weird stuff to git."""
+    """Light validation + normalização.
+
+    Hosts populares (github/gitlab/bitbucket) não servem mais git sobre HTTP plano,
+    então `http://github.com/...` falha com "Could not connect to server". Promove
+    para HTTPS automaticamente em vez de propagar o erro de rede ao usuário.
+    """
     if not re.match(r"^https?://", repo_url):
         raise ValueError(f"Repo URL must be http(s): {repo_url!r}")
-    return repo_url
+    return re.sub(
+        r"^http://(github\.com|gitlab\.com|bitbucket\.org)/",
+        r"https://\1/",
+        repo_url,
+        count=1,
+    )
 
 
 def _git_clone(repo_url: str, target: str) -> None:
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--single-branch", _safe_repo_url(repo_url), target],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    try:
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--single-branch", _safe_repo_url(repo_url), target],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.CalledProcessError as exc:
+        # stderr do git é onde mora a causa real (auth, repo not found, network).
+        # exit status sozinho não diz nada útil.
+        stderr = (exc.stderr or "").strip() or "(sem stderr)"
+        raise RuntimeError(
+            f"git clone falhou (exit {exc.returncode}) para {repo_url!r}: {stderr}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git clone excedeu 300s para {repo_url!r}") from exc
 
 
 def _walk_repo(root: str) -> List[str]:
@@ -115,6 +135,16 @@ def _pack_sync(repo_url: str, declared_language: Optional[str], tmpdir: str) -> 
     # das stacks suportadas (DRF, React, React Native), então aqui é sempre válido.
     declared_profile = resolve_profile(declared_language)
     detected_profile = detect_profile_from_tree(paths)
+
+    # Mismatch entre o que o desafio pede e o que o repo é → repomix vai retornar
+    # "No files found" porque os globs do perfil declarado não casam com nada no
+    # repo. Falha cedo com erro claro em vez de propagar a RepomixError opaca.
+    if detected_profile and detected_profile.name != declared_profile.name:
+        raise ValueError(
+            f"Stack do repositório ({detected_profile.canonical_language}) não "
+            f"corresponde à stack do desafio ({declared_profile.canonical_language}). "
+            f"Verifique se o repositório enviado é da stack correta."
+        )
 
     packed = _pack_local(repo_path, declared_profile, output_path)
     static_text, django_analysis = _run_static_analysis(repo_path, declared_profile)

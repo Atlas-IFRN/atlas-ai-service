@@ -1,7 +1,15 @@
+import logging
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 from app.profiles import list_profiles
 from app.schemas import (
@@ -39,8 +47,10 @@ async def detect(payload: DetectPayload) -> DetectResult:
     try:
         profile, paths = await repo.detect_repository_profile(str(payload.github_repo_url))
     except ValueError as exc:
+        logger.warning("Validação falhou em /detect: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Falha ao clonar/inspecionar repo em /detect")
         raise HTTPException(status_code=502, detail=f"Falha ao clonar/inspecionar repo: {exc}") from exc
 
     return DetectResult(
@@ -54,11 +64,17 @@ async def detect(payload: DetectPayload) -> DetectResult:
 @app.post("/analyze", response_model=AnalysisResult)
 async def analyze(payload: AnalyzePayload) -> AnalysisResult:
     """Runs the full pipeline inline (clone + repomix + LLM)."""
+    logger.info(
+        "/analyze recebido: user=%s challenge=%s repo=%s language=%s",
+        payload.user_id, payload.challenge_id, payload.github_repo_url, payload.language,
+    )
     try:
         packed = await repo.pack_repository(str(payload.github_repo_url), declared_language=payload.language)
     except ValueError as exc:
+        logger.warning("Validação falhou em /analyze (pack): %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Falha ao coletar repositório em /analyze")
         raise HTTPException(status_code=502, detail=f"Falha ao coletar repositório: {exc}") from exc
 
     try:
@@ -72,4 +88,5 @@ async def analyze(payload: AnalyzePayload) -> AnalysisResult:
             packed=packed,
         )
     except Exception as exc:
+        logger.exception("Falha na avaliação pelo LLM em /analyze")
         raise HTTPException(status_code=502, detail=f"Falha na avaliação pelo LLM: {exc}") from exc
