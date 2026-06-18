@@ -1,133 +1,65 @@
-# atlas-ia-service
+# Atlas AI Service 🤖
 
-Serviço HTTP que avalia repositórios GitHub contra critérios livres usando um LLM local (Ollama). Recebe um link de repo + uma lista de critérios com pesos, clona, empacota o código relevante por perfil de stack (DRF, React ou React Native), submete a um LLM, e devolve um scorecard `0–100` com evidências citáveis.
+Serviço HTTP que avalia repositórios GitHub contra critérios livres usando um **LLM local (Ollama)**. Recebe um link de repositório + lista de critérios com pesos, clona, empacota o código por perfil de stack (DRF, React, React Native), submete ao LLM e devolve um scorecard `0–100` com evidências citáveis.
 
-## O que faz
+## Stack
 
-Dado um payload assim:
+- Python 3.12 · FastAPI · Uvicorn
+- Ollama (LLM local) · repomix
+- Docker
 
-```json
-{
-  "user_id": "u1",
-  "challenge_id": "c1",
-  "github_repo_url": "https://github.com/usuario/projeto",
-  "language": "django",
-  "theme": "gerenciamento financeiro",
-  "challenge_description": "Faça um backend para gerenciamento financeiro",
-  "criteria": {
-    "Deve seguir o tema gerenciamento financeiro": 10,
-    "Deve haver uma tabela 'Wallet' no banco": 10,
-    "Boas práticas Two Scoops": 10
-  }
-}
-```
+## Como funciona
 
-O serviço:
+1. Clona o repo (`git clone --depth 1`) em pasta temporária
+2. Detecta o perfil da stack (`django` → `drf`, `react`, `react-native`)
+3. Filtra arquivos relevantes via **repomix** (ignora `node_modules/`, `__pycache__/`, builds)
+4. Roda analisador estático por perfil (AST para Django, estrutura de componentes para React)
+5. Monta prompt adversarial com regras gerais (R1–R6) + regras específicas do perfil
+6. Chama Ollama (`/api/generate` com `format: "json"`) e valida resposta
+7. Retorna `AnalysisResult` com `score`, `feedback`, `checks`, `strengths`, `improvements`
 
-1. Clona o repo (`git clone --depth 1`) em uma pasta temporária.
-2. Resolve o perfil declarado (`language: "django"` → profile `drf`) e filtra os arquivos relevantes via [repomix](https://github.com/yamadashy/repomix) (ignora `node_modules/`, `__pycache__/`, builds, etc.).
-3. Roda um analisador estático específico do perfil (no caso de Django, varre models/serializers/views/urls com AST para gerar checks factuais).
-4. Monta um prompt adversarial com regras gerais (R1–R6) + regras específicas do perfil (D1–D4 pra DRF, R1–R8 pra React, RN1–RN10 pra React Native).
-5. Chama o Ollama (`/api/generate` com `format: "json"`), valida o JSON, e devolve um `AnalysisResult`.
+## Score
 
-## Como funciona o score
+- **Profile checks (20%)** — checks factuais derivados do AST
+- **Critérios do usuário (80%)** — avaliados pelo LLM com base no código
 
-Saída `0–100` dividida entre duas famílias:
+## Executando localmente
 
-- **Profile checks (20%)** — checks factuais derivados do AST (ex: "tem `manage.py`?", "tem `Serializer`?"). Pesos relativos dentro da família.
-- **Critérios do usuário (80%)** — marcados pelo LLM com base no código + regras do prompt. Pesos relativos dentro da família.
+Este serviço é orquestrado junto com todos os outros pelo repositório central de infraestrutura:
 
-Se uma família está vazia, a outra absorve 100%.
+> **[Atlas-IFRN/atlas-infra](https://github.com/Atlas-IFRN/atlas-infra)** — Docker Compose canônico, Nginx, scripts de deploy e backup.
 
-## Pré-requisitos
-
-- Python 3.12+
-- `git` no PATH (pra clonar)
-- [Ollama](https://ollama.com) rodando local com pelo menos um modelo. Default: `qwen2.5-coder:3b`.
-  ```bash
-  ollama pull qwen2.5-coder:3b
-  ```
-- `repomix` (package Python usado pra empacotar o código). Se não tiver, instale com `pip install repomix`.
-
-## Setup
+Para rodar isolado em modo dev (requer Ollama rodando localmente):
 
 ```bash
-git clone <este-repo>
-cd atlas-ai-service
+# Pré-requisito: Ollama com modelo baixado
+ollama pull qwen2.5-coder:3b
 
-python -m venv venv
-source venv/bin/activate    # ou .\venv\Scripts\activate no Windows
+# Setup
+cp .env.example .env
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+
+# Rodar
+uvicorn app.main:app --reload --port 8003
 ```
 
-Crie um `.env` na raiz:
-
+`.env` mínimo:
 ```ini
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=qwen2.5-coder:3b
 ```
 
-Outras vars opcionais (com defaults sensatos em `app/services/llm.py`):
-
-| Var | Default | O que faz |
-|---|---|---|
-| `OLLAMA_NUM_CTX` | `65536` | Tamanho da janela de contexto (input + output) |
-| `OLLAMA_TEMPERATURE` | `0.2` | Mais alto = mais variação |
-| `OLLAMA_TIMEOUT` | `600` | Segundos antes de desistir da chamada |
-| `MAX_CODE_CHARS` | `200000` | Limite duro de chars de código no prompt |
-| `RESPONSE_TOKEN_BUDGET` | `2000` | Tokens reservados pra resposta JSON |
-
-## Rodando
-
-Local:
-
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-
-Docker:
-
-```bash
-docker build -t atlas-ia-service .
-docker run --rm -p 8000:8000 --env-file .env atlas-ia-service
-```
-
 ## Endpoints
 
-### `GET /health`
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET`  | `/health` | Health check |
+| `GET`  | `/profiles` | Lista perfis de stack suportados |
+| `POST` | `/detect` | Clona e detecta o perfil sem rodar análise |
+| `POST` | `/analyze` | Pipeline completo → scorecard |
 
-```json
-{ "status": "ok", "service": "atlas-ia-service" }
-```
-
-### `GET /profiles`
-
-Lista os perfis suportados.
-
-```json
-[
-  { "name": "drf", "canonical_language": "Django REST Framework (DRF)", "aliases": ["drf", "django", "..."] },
-  { "name": "react-native", "canonical_language": "React Native — TypeScript ou JavaScript (Expo opcional)", "aliases": ["..."] },
-  { "name": "react", "canonical_language": "React (web) — TypeScript ou JavaScript", "aliases": ["..."] }
-]
-```
-
-### `POST /detect`
-
-Clona o repo e tenta identificar o profile sem rodar análise. Útil pra debug.
-
-```json
-{ "github_repo_url": "https://github.com/usuario/projeto" }
-```
-
-Retorna `detected_profile`, contagem de arquivos e amostra de paths.
-
-### `POST /analyze`
-
-Pipeline completo: clone → empacotamento → análise estática → LLM → scorecard. Resposta inline (não usa fila).
-
-**Request:**
-
+**Exemplo de request para `/analyze`:**
 ```json
 {
   "user_id": "u1",
@@ -135,90 +67,46 @@ Pipeline completo: clone → empacotamento → análise estática → LLM → sc
   "github_repo_url": "https://github.com/usuario/projeto",
   "language": "django",
   "theme": "gerenciamento financeiro",
-  "challenge_description": "faça um backend para gerenciamento financeiro",
+  "challenge_description": "Backend para gerenciamento financeiro",
   "criteria": {
     "Deve seguir o tema gerenciamento financeiro": 10,
-    "Deve haver uma tabela 'Wallet' no banco": 10
+    "Deve haver uma tabela Wallet no banco": 10,
+    "Boas práticas Two Scoops": 10
   }
 }
 ```
-
-**Response (`AnalysisResult`):**
-
-```json
-{
-  "user_id": "u1",
-  "challenge_id": "c1",
-  "score": 47,
-  "feedback": "O projeto modela um clube de leitura com Book/Review/Reservation em models.py. Não há entidades do tema financeiro (Transaction, Account, etc.) — o tema não é atendido.",
-  "checks": [
-    {
-      "id": "has_manage_py",
-      "label": "Projeto é Django (existe manage.py)",
-      "kind": "profile",
-      "weight": 15,
-      "present": true,
-      "evidence": "manage.py encontrado"
-    },
-    {
-      "id": "1",
-      "label": "Deve seguir o tema gerenciamento financeiro",
-      "kind": "criterion",
-      "weight": 10,
-      "present": false,
-      "evidence": "models.py contém Book/Review/Reservation — nenhuma entidade financeira."
-    }
-  ],
-  "strengths": ["..."],
-  "improvements": ["..."],
-  "profile": "drf"
-}
-```
-
-Validações automáticas:
-- `language` deve resolver pra um profile suportado (caso contrário 422 com a lista válida).
-- `criteria` é `{label: peso}`. Peso é int 0–100. Labels vazios são silenciosamente removidos.
-- Ordem do dict é preservada e usada como ordem dos `id`s (`"1"`, `"2"`, `"3"`...).
 
 ## Estrutura
 
 ```
 app/
-├── main.py                      # endpoints FastAPI
-├── schemas.py                   # AnalyzePayload, AnalysisResult, Check, ...
-├── profiles/
-│   ├── base.py                  # dataclass ProjectProfile
-│   ├── django.py                # DJANGO_PROFILE + evaluation_hints (D1–D4)
-│   ├── react.py                 # REACT_PROFILE / REACT_NATIVE_PROFILE
-│   └── registry.py              # resolve_profile, detect_profile_from_tree
+├── main.py             # endpoints FastAPI
+├── schemas.py          # AnalyzePayload, AnalysisResult, Check
+├── profiles/           # base.py, django.py, react.py, registry.py
 └── services/
-    ├── repo.py                  # clone + repomix + análise estática
-    ├── llm.py                   # PROMPT_TEMPLATE, build_prompt, evaluate, compute_score
-    └── analyzers/
-        ├── django_analyzer.py   # AST de models/serializers/views/urls
-        └── checks.py            # converte análise em profile checks
+    ├── repo.py         # clone + repomix + análise estática
+    ├── llm.py          # PROMPT_TEMPLATE, build_prompt, evaluate, compute_score
+    └── analyzers/      # django_analyzer.py, checks.py
 ```
 
-## Como o prompt funciona
+## Adicionando novo perfil de stack
 
-O `PROMPT_TEMPLATE` em [`app/services/llm.py`](app/services/llm.py) é dividido em:
+1. Crie `app/profiles/<stack>.py` seguindo o padrão de `django.py`
+2. Preencha `evaluation_hints` com as regras específicas
+3. Adicione ao `ALL_PROFILES` em `app/profiles/registry.py`
 
-- **Coringa** (qualquer stack): R1–R6 (tema = seção 1, tabela verdade de `present`, evidência literal, assunto do critério, blacklist de entidades genéricas, critério de tema).
-- **Específico do perfil**: bloco renderizado a partir de `ProjectProfile.evaluation_hints`. DRF tem D1–D4, React tem R1–R8, React Native tem RN1–RN10.
+## Variáveis opcionais
 
-O LLM é forçado a preencher uma **ficha de raciocínio** (campos `_assunto`, `_polaridade_criterio`, `_onde_busquei`, `_o_que_achei`, `_polaridade_evidencia`, `_aplicando_R2`, `_se_for_criterio_de_tema`) antes de decidir `present`/`evidence`. O parser do servidor só lê `id`/`present`/`evidence` — os campos `_*` servem só pra forçar o modelo a pensar.
-
-## Adicionando um novo perfil
-
-1. Crie `app/profiles/<stack>.py` com um `ProjectProfile(...)` (siga o padrão de `django.py`).
-2. Preencha `evaluation_hints` com as regras específicas da stack.
-3. Adicione ao `ALL_PROFILES` em `app/profiles/registry.py`.
-4. (Opcional) Crie um analisador estático em `app/services/analyzers/` se for útil.
-
-Nenhuma mudança em `llm.py` é necessária — o bloco do profile é injetado automaticamente no prompt.
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `OLLAMA_NUM_CTX` | `65536` | Tamanho da janela de contexto |
+| `OLLAMA_TEMPERATURE` | `0.2` | Criatividade do modelo |
+| `OLLAMA_TIMEOUT` | `600` | Timeout em segundos |
+| `MAX_CODE_CHARS` | `200000` | Limite de chars de código no prompt |
 
 ## Limitações conhecidas
 
-- `repomix` precisa estar instalado mas não está em `requirements.txt` — adicione lá se for empacotar o serviço pra outra máquina.
-- Modelos pequenos (qwen2.5-coder:3b) ocasionalmente alucinam. As regras do prompt mitigam mas não eliminam — para produção, considere um modelo maior (qwen2.5-coder:14b, llama3.1:8b-instruct).
-- Não há sistema de fila: requisições longas (repo grande + LLM lento) ficam pendentes na conexão HTTP até completarem.
+- Modelos pequenos (3b) podem alucinar — para produção recomenda-se `qwen2.5-coder:14b` ou superior
+- Não há fila: requisições longas ficam pendentes na conexão HTTP até completar
+- `repomix` deve estar no `requirements.txt` se for empacotar para outra máquina
+
