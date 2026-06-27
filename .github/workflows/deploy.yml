@@ -1,0 +1,48 @@
+name: Deploy ai-service to production
+
+# Dispara apenas no merge/push para main (produção).
+# A branch de desenvolvimento (develop) NÃO dispara deploy.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ai-service
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy (ai-service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script_stop: true
+          command_timeout: 25m
+          script: |
+            set -e
+            PROJECT_DIR="/home/development"
+            SERVICE_DIR="$PROJECT_DIR/services/ai"
+            cd "$PROJECT_DIR"
+
+            echo "==> Deploy de ai-service ($(date '+%Y-%m-%d %H:%M:%S'))"
+
+            # Produção roda a branch main: força o checkout dela.
+            echo "--> Atualizando services/ai para origin/main..."
+            git -C "$SERVICE_DIR" fetch origin main
+            git -C "$SERVICE_DIR" checkout -B main origin/main
+
+            # Rebuilda e reinicia apenas o(s) container(s) deste serviço.
+            echo "--> Rebuildando: ai-service"
+            docker compose up -d --build ai-service
+
+            docker image prune -f
+            echo ""
+            docker compose ps ai-service
+            echo "✓ ai-service atualizado."
