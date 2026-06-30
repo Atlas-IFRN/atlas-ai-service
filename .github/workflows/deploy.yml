@@ -27,7 +27,7 @@ jobs:
           command_timeout: 25m
           script: |
             set -e
-            PROJECT_DIR="/home/development"
+            PROJECT_DIR="/home/production"
             SERVICE_DIR="$PROJECT_DIR/services/ai"
             cd "$PROJECT_DIR"
 
