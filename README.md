@@ -54,12 +54,12 @@ OLLAMA_MODEL=qwen2.5-coder:3b
 
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `GET`  | `/health` | Health check |
-| `GET`  | `/profiles` | Lista perfis de stack suportados |
-| `POST` | `/detect` | Clona e detecta o perfil sem rodar análise |
-| `POST` | `/analyze` | Pipeline completo → scorecard |
+| `GET`  | `/health` | Health check (interno, fora do gateway) |
+| `GET`  | `/api/ai/profiles` | Lista perfis de stack suportados |
+| `POST` | `/api/ai/detect` | Clona e detecta o perfil sem rodar análise |
+| `POST` | `/api/ai/analyze` | Pipeline completo → scorecard |
 
-**Exemplo de request para `/analyze`:**
+**Exemplo de request para `/api/ai/analyze`:**
 ```json
 {
   "user_id": "u1",
