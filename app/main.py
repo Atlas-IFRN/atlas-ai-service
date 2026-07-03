@@ -1,7 +1,7 @@
 import logging
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 
 load_dotenv()
 
@@ -25,10 +25,14 @@ app = FastAPI(
     title="Atlas IA Service",
     description="Serviço de IA para análise de repositórios, fornecendo detecção de perfil e avaliação baseada em LLM.",
     version="0.2.0",
-    docs_url="/api/docs",
+    docs_url="/api/ai/docs",
     redoc_url=None,
-    openapi_url="/api/schema",
+    openapi_url="/api/ai/schema",
 )
+
+# Rotas de negocio sob o namespace do servico (/api/ai/...), roteado pelo gateway.
+# O /health fica na raiz por ser probe interno de liveness, fora do prefixo.
+router = APIRouter(prefix="/api/ai")
 
 
 @app.get("/health")
@@ -36,12 +40,12 @@ async def health() -> dict:
     return {"status": "ok", "service": "atlas-ia-service"}
 
 
-@app.get("/profiles", response_model=list[ProfileInfo])
+@router.get("/profiles", response_model=list[ProfileInfo])
 async def profiles() -> list[ProfileInfo]:
     return [ProfileInfo(**p) for p in list_profiles()]
 
 
-@app.post("/detect", response_model=DetectResult)
+@router.post("/detect", response_model=DetectResult)
 async def detect(payload: DetectPayload) -> DetectResult:
     """Clones the repo and tries to identify the project profile. Diagnostic endpoint."""
     try:
@@ -61,7 +65,7 @@ async def detect(payload: DetectPayload) -> DetectResult:
     )
 
 
-@app.post("/analyze", response_model=AnalysisResult)
+@router.post("/analyze", response_model=AnalysisResult)
 async def analyze(payload: AnalyzePayload) -> AnalysisResult:
     """Runs the full pipeline inline (clone + repomix + LLM)."""
     logger.info(
@@ -90,3 +94,6 @@ async def analyze(payload: AnalyzePayload) -> AnalysisResult:
     except Exception as exc:
         logger.exception("Falha na avaliação pelo LLM em /analyze")
         raise HTTPException(status_code=502, detail=f"Falha na avaliação pelo LLM: {exc}") from exc
+
+
+app.include_router(router)
