@@ -1,112 +1,90 @@
-# Atlas AI Service 🤖
+# Atlas · AI Service 🤖
 
-Serviço HTTP que avalia repositórios GitHub contra critérios livres usando um **LLM local (Ollama)**. Recebe um link de repositório + lista de critérios com pesos, clona, empacota o código por perfil de stack (DRF, React, React Native), submete ao LLM e devolve um scorecard `0–100` com evidências citáveis.
+> Parte do **Projeto Atlas** — plataforma acadêmica desenvolvida para o **IFRN Campus Pau dos Ferros** como Projeto Integrador de Sistemas Distribuídos. O Atlas conecta alunos a trilhas de conhecimento e bolsas, com avaliação automática de código por IA.
+
+Serviço HTTP que **avalia repositórios GitHub** contra critérios definidos, usando um **LLM local (Ollama)**. Recebe o link de um repositório e uma lista de critérios com pesos, clona o código, empacota-o por perfil de stack, submete ao LLM e devolve um *scorecard* `0–100` com evidências.
+
+## O que este serviço faz
+
+1. **Clona** o repositório (`git clone --depth 1`) em pasta temporária.
+2. **Detecta o perfil** da stack (ex.: Django/DRF, React).
+3. **Empacota** os arquivos relevantes com **repomix** (ignora `node_modules/`, `__pycache__/`, builds).
+4. **Analisa estaticamente** por perfil (ex.: AST para Django) gerando *checks* factuais.
+5. **Monta o prompt** com regras gerais + regras específicas do perfil e chama o **Ollama** (`format: json`).
+6. **Retorna** `score`, `feedback`, `checks`, `strengths` e `improvements`.
+
+### Composição do score
+- **Checks de perfil (20%)** — verificações factuais derivadas da análise estática.
+- **Critérios do usuário (80%)** — avaliados pelo LLM com base no código.
 
 ## Stack
 
-- Python 3.12 · FastAPI · Uvicorn
-- Ollama (LLM local) · repomix
-- Docker
+- Python 3.12 · **FastAPI** · Uvicorn · Pydantic
+- **Ollama** (LLM local, ex.: `qwen2.5-coder`) · **repomix** · httpx
+- Docker · prometheus-fastapi-instrumentator
 
-## Como funciona
+> Diferente dos demais serviços do Atlas (Django), este serviço é um app **FastAPI** enxuto, focado em processamento.
 
-1. Clona o repo (`git clone --depth 1`) em pasta temporária
-2. Detecta o perfil da stack (`django` → `drf`, `react`, `react-native`)
-3. Filtra arquivos relevantes via **repomix** (ignora `node_modules/`, `__pycache__/`, builds)
-4. Roda analisador estático por perfil (AST para Django, estrutura de componentes para React)
-5. Monta prompt adversarial com regras gerais (R1–R6) + regras específicas do perfil
-6. Chama Ollama (`/api/generate` com `format: "json"`) e valida resposta
-7. Retorna `AnalysisResult` com `score`, `feedback`, `checks`, `strengths`, `improvements`
+## Como se encaixa no Atlas
 
-## Score
+| Repositório | Responsabilidade |
+|---|---|
+| atlas-auth-service | Identidade: SUAP OAuth2, JWT, perfis de usuário |
+| atlas-track-service | Trilhas, módulos, conteúdos, progresso e submissão de desafios |
+| atlas-scholarship-service | Bolsas, candidaturas, banco de talentos e notas |
+| atlas-feed-service | Feed institucional: posts, comentários, curtidas e banners |
+| atlas-notification-service | Notificações (consumidor central via RabbitMQ) |
+| **atlas-ai-service** | **Avaliação de repositórios GitHub por LLM local (Ollama)** |
+| atlas-frontend | SPA React + TypeScript (aluno e professor) |
+| atlas-infra | Docker Compose, Nginx (gateway), Postgres/Redis/RabbitMQ, deploy e backup |
+| atlas-observability | Prometheus + Grafana (métricas dos serviços) |
 
-- **Profile checks (20%)** — checks factuais derivados do AST
-- **Critérios do usuário (80%)** — avaliados pelo LLM com base no código
-
-## Executando localmente
-
-Este serviço é orquestrado junto com todos os outros pelo repositório central de infraestrutura:
-
-> **[Atlas-IFRN/atlas-infra](https://github.com/Atlas-IFRN/atlas-infra)** — Docker Compose canônico, Nginx, scripts de deploy e backup.
-
-Para rodar isolado em modo dev (requer Ollama rodando localmente):
-
-```bash
-# Pré-requisito: Ollama com modelo baixado
-ollama pull qwen2.5-coder:3b
-
-# Setup
-cp .env.example .env
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Rodar
-uvicorn app.main:app --reload --port 8003
-```
-
-`.env` mínimo:
-```ini
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen2.5-coder:3b
-```
+**Quem chama:** o **tracks-service** aciona este serviço quando um aluno submete um desafio. A chamada é feita de forma **assíncrona** por um worker Celery (`POST /analyze`), mantendo a experiência do aluno responsiva enquanto a análise por IA roda em segundo plano. O container `ollama` roda junto na stack do [atlas-infra](https://github.com/Atlas-IFRN/atlas-infra).
 
 ## Endpoints
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| `GET`  | `/health` | Health check (interno, fora do gateway) |
-| `GET`  | `/api/ai/profiles` | Lista perfis de stack suportados |
-| `POST` | `/api/ai/detect` | Clona e detecta o perfil sem rodar análise |
-| `POST` | `/api/ai/analyze` | Pipeline completo → scorecard |
-
-**Exemplo de request para `/api/ai/analyze`:**
-```json
-{
-  "user_id": "u1",
-  "challenge_id": "c1",
-  "github_repo_url": "https://github.com/usuario/projeto",
-  "language": "django",
-  "theme": "gerenciamento financeiro",
-  "challenge_description": "Backend para gerenciamento financeiro",
-  "criteria": {
-    "Deve seguir o tema gerenciamento financeiro": 10,
-    "Deve haver uma tabela Wallet no banco": 10,
-    "Boas práticas Two Scoops": 10
-  }
-}
-```
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/api/ai/profiles` | Perfis de stack suportados |
+| POST | `/api/ai/detect` | Detecta o perfil de um repositório |
+| POST | `/api/ai/analyze` | Avalia o repositório e retorna o scorecard |
 
 ## Estrutura
 
 ```
-app/
-├── main.py             # endpoints FastAPI
-├── schemas.py          # AnalyzePayload, AnalysisResult, Check
-├── profiles/           # base.py, django.py, react.py, registry.py
-└── services/
-    ├── repo.py         # clone + repomix + análise estática
-    ├── llm.py          # PROMPT_TEMPLATE, build_prompt, evaluate, compute_score
-    └── analyzers/      # django_analyzer.py, checks.py
+app/main.py              FastAPI + rotas
+app/schemas.py           modelos Pydantic (payloads e resultados)
+app/profiles/            perfis de stack (base, django, react, registry)
+app/services/repo.py     clone + empacotamento (repomix)
+app/services/llm.py      integração com o Ollama
+app/services/analyzers/  análise estática (django_analyzer, checks)
 ```
 
-## Adicionando novo perfil de stack
+## Executando localmente
 
-1. Crie `app/profiles/<stack>.py` seguindo o padrão de `django.py`
-2. Preencha `evaluation_hints` com as regras específicas
-3. Adicione ao `ALL_PROFILES` em `app/profiles/registry.py`
+> Orquestrado pelo repositório central: **[Atlas-IFRN/atlas-infra](https://github.com/Atlas-IFRN/atlas-infra)** (que já sobe o Ollama).
 
-## Variáveis opcionais
+Para rodar isolado (requer Ollama local):
 
-| Variável | Default | Descrição |
-|----------|---------|-----------|
-| `OLLAMA_NUM_CTX` | `65536` | Tamanho da janela de contexto |
-| `OLLAMA_TEMPERATURE` | `0.2` | Criatividade do modelo |
-| `OLLAMA_TIMEOUT` | `600` | Timeout em segundos |
-| `MAX_CODE_CHARS` | `200000` | Limite de chars de código no prompt |
+```bash
+# Pré-requisito: Ollama com o modelo baixado
+ollama pull qwen2.5-coder:1.5b
 
-## Limitações conhecidas
+cp .env.example .env
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8003 --reload
+```
 
-- Modelos pequenos (3b) podem alucinar — para produção recomenda-se `qwen2.5-coder:14b` ou superior
-- Não há fila: requisições longas ficam pendentes na conexão HTTP até completar
-- `repomix` deve estar no `requirements.txt` se for empacotar para outra máquina
+## Variáveis de ambiente
 
+Baseie seu `.env` no `.env.example`. Principais: `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_NUM_CTX`, `OLLAMA_TEMPERATURE`, `OLLAMA_TIMEOUT` e o orçamento de prompt (`MAX_CODE_CHARS`, `MAX_TREE_CHARS`, `RESPONSE_TOKEN_BUDGET`, ...).
+
+## Observabilidade
+
+Métricas expostas via `prometheus-fastapi-instrumentator`, coletadas pelo [atlas-observability](https://github.com/Atlas-IFRN/atlas-observability) (job `ai`, porta `8003`).
+
+## CI/CD
+
+Workflows de GitHub Actions em `.github/workflows/`.
