@@ -2,6 +2,7 @@ import logging
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException
+from prometheus_fastapi_instrumentator import Instrumentator
 
 load_dotenv()
 
@@ -97,3 +98,7 @@ async def analyze(payload: AnalyzePayload) -> AnalysisResult:
 
 
 app.include_router(router)
+
+# Expõe /metrics para o Prometheus (atlas-observability). Métricas HTTP padrão
+# (http_requests_total, http_request_duration_seconds) + coletores de processo.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
